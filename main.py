@@ -26,6 +26,26 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Wet Basement Services", lifespan=lifespan)
 
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add HSTS and related hardening headers.
+
+    Without Strict-Transport-Security, browsers show a "Not secure" indicator
+    even on a valid certificate, because they have no instruction to require
+    HTTPS for this host. The certificate itself is fine -- this is purely a
+    browser-trust signal.
+
+    Deliberately no includeSubDomains: this runs on a shared
+    *.azurecontainerapps.io hostname, and HSTS on a shared parent domain is
+    antisocial. max-age only applies to this exact host.
+    """
+    response = await call_next(request)
+    response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
+
 # Azure Container Apps terminates TLS at the ingress and forwards PLAIN HTTP to
 # the container. Without this, the app believes it is serving over http and
 # generates http:// URLs -- including the admin login form's action and the

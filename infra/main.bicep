@@ -118,46 +118,29 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 // ---------------------------------------------------------------------------
-// Persistent storage for the SQLite database (Azure Files)
+// NO Azure Files volume for the database. Deliberately removed.
+//
+// The app was mounted on an Azure Files (SMB) share with
+// DATABASE_URL pointing at /data/wetbasement.db. It crashed in a loop:
+//
+//   sqlalchemy.exc.OperationalError: (sqlite3.OperationalError)
+//     database is locked
+//   [SQL: CREATE TABLE site_settings (...)]
+//   ERROR:    Application startup failed. Exiting.   (exit code 3)
+//
+// SQLite relies on POSIX fcntl() byte-range locks. SMB does not implement them
+// faithfully, so SQLite cannot even create its tables on an Azure Files mount.
+// This is not a concurrency problem you can tune away with busy_timeout or
+// journal_mode -- WAL is worse, since it also needs shared memory (mmap).
+//
+// Azure Container Apps only offers Azure Files for persistent volumes, so
+// there is NO reliable way to run SQLite on a persistent ACA volume.
+//
+// Therefore: SQLite runs on the container's LOCAL disk (see DATABASE_URL
+// below). It works, but it is EPHEMERAL -- every new revision starts with an
+// empty database and re-seeds. Fine for a demo; for real persistence move to
+// Azure Database for PostgreSQL Flexible Server (Burstable B1ms, ~$13/mo).
 // ---------------------------------------------------------------------------
-var saName = take(toLower('${prefix}data${uniqueString(resourceGroup().id)}'), 24)
-
-resource sa 'Microsoft.Storage/storageAccounts@2023-05-01' = {
-  name: saName
-  location: location
-  sku: { name: 'Standard_LRS' }
-  kind: 'StorageV2'
-  properties: {
-    minimumTlsVersion: 'TLS1_2'
-    allowBlobPublicAccess: false
-    supportsHttpsTrafficOnly: true
-  }
-}
-
-resource fileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
-  parent: sa
-  name: 'default'
-}
-
-resource dataShare 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
-  parent: fileService
-  name: 'wbsdata'
-}
-
-// Registers the file share with the Container Apps environment so the app's
-// `volumes` block can mount it at /data.
-resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
-  parent: cae
-  name: 'wbsdata'
-  properties: {
-    azureFile: {
-      accountName: sa.name
-      accountKey: sa.listKeys().keys[0].value
-      shareName: dataShare.name
-      accessMode: 'ReadWrite'
-    }
-  }
-}
 
 // ---------------------------------------------------------------------------
 // Container App
@@ -231,9 +214,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
             { name: 'ADMIN_USER', value: adminUser }
             { name: 'ADMIN_PASS', secretRef: 'admin-pass' }
             { name: 'SECRET_KEY', secretRef: 'secret-key' }
-            // SQLite on an Azure Files mount. Single-writer only -- see
-            // DEPLOYMENT.md before adding any feature with concurrent writes.
-            { name: 'DATABASE_URL', value: 'sqlite+aiosqlite:////data/wetbasement.db' }
+            // Container-LOCAL path, deliberately NOT /data. SQLite cannot run
+            // on an Azure Files (SMB) mount -- see the note above the Container
+            // App. Trade-off: this disk is ephemeral, so the database is
+            // recreated and re-seeded on every new revision. Acceptable for a
+            // demo; use PostgreSQL for anything real.
+            { name: 'DATABASE_URL', value: 'sqlite+aiosqlite:////app/wetbasement.db' }
           ]
           probes: [
             {
@@ -251,17 +237,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
               failureThreshold: 3
             }
           ]
-          // WITHOUT THIS the `volumes` block below does nothing. Declaring a
-          // volume at the template level is not enough -- the container must
-          // mount it. Without a mount, /data lives on the container's
-          // ephemeral filesystem and the SQLite database is recreated (and
-          // re-seeded) on EVERY new revision, silently losing all leads.
-          volumeMounts: [
-            {
-              volumeName: 'data'
-              mountPath: '/data'
-            }
-          ]
         }
       ]
 
@@ -277,14 +252,6 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
           }
         ]
       }
-
-      volumes: [
-        {
-          name: 'data'
-          storageType: 'AzureFile'
-          storageName: 'wbsdata'
-        }
-      ]
     }
   }
 }
