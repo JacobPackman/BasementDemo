@@ -7,6 +7,7 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqladmin import Admin
+from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from models import init_db, engine, AsyncSessionLocal, SiteSetting, Service, Testimonial, Lead
 from admin import AdminAuth, SiteSettingAdmin, ServiceAdmin, TestimonialAdmin, LeadAdmin
@@ -24,6 +25,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Wet Basement Services", lifespan=lifespan)
+
+# Azure Container Apps terminates TLS at the ingress and forwards PLAIN HTTP to
+# the container. Without this, the app believes it is serving over http and
+# generates http:// URLs -- including the admin login form's action and the
+# post-login redirect. Browsers then block the login POST as mixed content and
+# the user sees an "insecure form" warning before they even submit.
+# Trust X-Forwarded-Proto so every generated URL is https.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
 
 # Templates
 templates = Jinja2Templates(directory="templates")

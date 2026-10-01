@@ -22,5 +22,8 @@ RUN mkdir -p /data
 
 EXPOSE 8000
 
-# Run uvicorn on port 8000
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# --proxy-headers + --forwarded-allow-ips: trust X-Forwarded-Proto from the
+# Azure Container Apps ingress (which terminates TLS) so the app generates
+# https:// URLs. Without this, the admin login form posts to http:// and
+# browsers block it as mixed content.
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000", "--proxy-headers", "--forwarded-allow-ips", "*"]
