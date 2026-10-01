@@ -69,28 +69,48 @@ jobs:
               --revision "$REV" --query "$1" -o tsv
           }
 
-          # healthState can legitimately read "None" (e.g. a revision created by
-          # an infra deploy or a manual update), even when the revision has
-          # probes and serves traffic fine. Gating on it would refuse to promote
-          # healthy revisions. Gate on runningState/provisioningState instead,
-          # then prove it end-to-end with a live probe -- which is the only
-          # signal that reflects reality anyway.
+          # State strings are ADVISORY. The live probe below is the real gate.
+          #
+          # Gating on an exact state string has now broken this workflow twice
+          # in opposite directions:
+          #   - healthState == 'Healthy' refused revisions that legitimately
+          #     report 'None' (infra-deploy / manual-update revisions)
+          #   - runningState == 'Running' refused 'RunningAtMaxScale', which is
+          #     a perfectly healthy state (running at max replica count)
+          #
+          # Values observed live and all acceptable:
+          #   runningState      : Running | RunningAtMaxScale
+          #   provisioningState : Provisioned
+          #   healthState       : Healthy | None
+          #
+          # So only fail on states that are unambiguously bad, and let a real
+          # 200 from the revision's own /health decide.
           RUNNING=$(show properties.runningState)
           PROV=$(show properties.provisioningState)
           HEALTH=$(show properties.healthState)
           echo "runningState=${RUNNING} provisioningState=${PROV} healthState=${HEALTH}"
 
-          if [ "${RUNNING}" != "Running" ]; then
-            echo "::error::Revision ${REV} is not Running (got '${RUNNING}'). Refusing to promote."
-            exit 1
-          fi
+          case "${RUNNING}" in
+            Running*) ;;   # Running, RunningAtMaxScale, ...
+            Stopped|Failed|Degraded|Processing)
+              echo "::error::Revision ${REV} is not serving (runningState='${RUNNING}'). Refusing to promote."
+              exit 1
+              ;;
+            *)
+              echo "::warning::Unexpected runningState '${RUNNING}'; deferring to the live probe."
+              ;;
+          esac
+
+          # NOTE: use `if`, not `[ ... ] && echo`. Under `set -e`, the && form
+          # returns non-zero when the test is FALSE (i.e. the healthy case) and
+          # would abort the step.
           if [ "${PROV}" != "Provisioned" ]; then
-            echo "::error::Revision ${REV} is not Provisioned (got '${PROV}'). Refusing to promote."
-            exit 1
+            echo "::warning::provisioningState is '${PROV}', not 'Provisioned'."
           fi
           if [ "${HEALTH}" != "Healthy" ]; then
-            echo "::warning::healthState is '${HEALTH}', not 'Healthy'. Continuing -- the live probe below is authoritative."
+            echo "::warning::healthState is '${HEALTH}', not 'Healthy'."
           fi
+          echo "State strings are advisory; the live probe is authoritative."
 
           APP_FQDN=$(az containerapp show \
             --name "${{ env.AZURE_CONTAINER_APP }}" \
