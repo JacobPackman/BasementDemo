@@ -31,9 +31,25 @@ uvicorn main:app --reload --port 8000
 - Public Site: `http://localhost:8000/`
 - Dad's CMS: `http://localhost:8000/admin` (Default: `admin` / `seattlewet123`)
 
-## Recommended Deployment (Saving $130/mo)
-Deploy on **Azure Container Apps (ACA)**:
-- Generous free monthly execution tier.
-- Built-in automatic free SSL / Let's Encrypt certificates.
-- Direct integration with GitHub Actions (`ghcr.io`).
-- Costs under $5/mo compared to DreamHost's $130/mo.
+## Deployment
+
+See **[DEPLOYMENT.md](DEPLOYMENT.md)** for the full architecture.
+
+Pushing to `main` builds, deploys a new revision at **0% traffic**, smoke tests
+it on its own FQDN, and **stops**. Nothing reaches customers until someone runs
+the **Promote** workflow. **Rollback** is a one-command traffic shift — seconds,
+no rebuild.
+
+Target platform is **Azure Container Apps**, not ACI:
+- Free automated managed TLS on custom domains
+- Scale-to-zero, so compute is ~$0 at low traffic
+- Multiple revisions, which is what makes staged deploys and instant rollback possible
+- Images pulled by **managed identity** — no registry credential exists anywhere
+
+## Known constraints
+
+- **SQLite on Azure Files is single-writer.** `maxReplicas` is pinned to 1 for
+  this reason. Migrate to Postgres before adding anything stateful.
+- **The `/quote` endpoint is open and unauthenticated.** Fine locally; needs
+  rate limiting and a bot check before going live.
+

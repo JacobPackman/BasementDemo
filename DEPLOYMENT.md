@@ -191,32 +191,90 @@ main.py, models.py, admin.py      FastAPI app + SQLAdmin CMS
 templates/                        Jinja2 templates (Tailwind + HTMX)
 Dockerfile, docker-compose.yml    local + container build
 infra/main.bicep                  all Azure resources, declarative
-infra/setup-oidc.sh               one-time Entra + OIDC + RBAC bootstrap
-.github/workflows/deploy.yml      build → stage → smoke → promote
+infra/setup-oidc.sh               one-time bootstrap: infra + OIDC + RBAC + vars
+.github/workflows/deploy.yml      build -> stage at 0% -> smoke test -> STOP
+.github/workflows/promote.yml     human gate: shift traffic to staged revision
 .github/workflows/rollback.yml    one-click traffic shift to a prior revision
 ```
 
-Delete `.github/workflows/docker-build.yml` (the original GHCR push) — `deploy.yml`
-supersedes it with the ACR + ACA path.
+## Deployment lifecycle
+
+Pushing to `main` does **not** put anything in front of customers:
+
+1. **build** — buildx build, push to ACR tagged with the git SHA
+2. **stage** — create a new revision, then explicitly pin traffic back to the
+   previously-live revision so the new one sits at **0%**
+3. **smoke** — probe `/health` on the revision-specific FQDN
+   (`<app>--<suffix>.<env-domain>`) before any customer sees it
+4. **stops** — reports the staged revision name. Nothing is promoted.
+
+Then a human runs the **Promote** workflow. It re-checks the target's
+`healthState`, refuses to promote anything not `Healthy`, and shifts 100%.
+
+**Rollback** is a traffic shift to a previous revision — seconds, no rebuild,
+since the old image is still in ACR.
+
+> Note: promotion is a separate `workflow_dispatch` workflow rather than
+> GitHub's "required reviewers" environment gate, because that gate is a
+> **paid-plan feature** — GitHub Free on a private repo rejects it with
+> `HTTP 422: Please ensure the billing plan supports the required reviewers
+> protection rule`. The manual workflow gives the same human gate for free.
+
+## Verified working
+
+Exercised end-to-end against a live subscription, not just compiled:
+
+| Check | Result |
+|---|---|
+| `az bicep build` | clean, no warnings |
+| Container App reachable | `/health` 200, homepage 200 (28,354 bytes) |
+| CMS login | rejects wrong password, accepts correct |
+| Lead capture | POST `/quote` persists, `is_emergency` correct |
+| Pipeline build + stage + smoke | success — smoke probed the revision FQDN at 0% traffic |
+| Promote | traffic shifted to the staged revision |
+| Rollback | traffic shifted back, public endpoint stayed 200 |
+| Registry credentials | none — managed identity pull |
 
 ## Bring-up order
 
+The bootstrap script is idempotent and does the whole thing — infra, OIDC,
+RBAC, the first image build, and the GitHub variables.
+
 1. `az login && az account set --subscription <id>`
-2. Edit `GITHUB_ORG` / `GITHUB_REPO` at the top of `infra/setup-oidc.sh`
-3. `chmod +x infra/setup-oidc.sh && ./infra/setup-oidc.sh`
-4. Paste the three printed values into GitHub → Settings → Secrets and
-   variables → Actions → **Variables**
-5. Create GitHub Environments `dev` and `prod`; add required reviewers on `prod`
-6. Push to `main`
+2. Set `GITHUB_ORG` / `GITHUB_REPO` (top of `infra/setup-oidc.sh`, or env vars)
+3. `ADMIN_PASS='...' ./infra/setup-oidc.sh`
+   - Phase 1: ACR + ACA environment + storage + identity + RBAC
+   - Phase 2: `az acr build` pushes the first image
+   - Phase 3: the Container App comes up
+   - Then: app registration, federated credentials (both subject formats),
+     RBAC, and `gh variable set` for every name the workflows need
+4. `gh api --method PUT /repos/ORG/REPO/environments/dev` and `.../prod`
+   (environments must exist before a workflow can reference them)
+5. Push to `main` → build, stage at 0%, smoke test, stop
+6. Run the **Promote** workflow to put it in front of customers
 7. Point `wetbasementservices.com` at the Container App FQDN behind Cloudflare
 
 ## Before going live
 
 - [ ] Admin password is in ACA secrets (`secretref`), not a plain env var —
-      already wired in the Bicep, but the defaults in `main.py` must be removed
+      already wired in the Bicep, but the hardcoded defaults in `main.py`
+      should be removed so a misconfigured deploy fails loudly
 - [ ] Move `ADMIN_PASS` / `SECRET_KEY` to **Azure Key Vault** references
 - [ ] Add CSRF protection to the public `/quote` form (it's currently open and
       unauthenticated — fine locally, needs rate limiting and a bot check in prod)
 - [ ] Add Cloudflare Turnstile to the quote form
 - [ ] Confirm the real phone numbers and copy replace the seeded placeholder text
 - [ ] Set a budget alert on the subscription
+- [ ] Decide `minReplicas`: 0 is ~$0 with a cold start on the first hit; put
+      Cloudflare caching in front and most visitors never wake the container
+
+## Teardown
+
+This is a demo. Everything removes cleanly:
+
+```bash
+az group delete --name rg-wetbasement-demo --yes --no-wait
+az ad app delete --id <app-id>          # printed by the bootstrap
+gh repo delete JacobPackman/BasementDemo --yes
+```
+
