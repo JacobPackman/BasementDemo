@@ -251,6 +251,17 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
               failureThreshold: 3
             }
           ]
+          // WITHOUT THIS the `volumes` block below does nothing. Declaring a
+          // volume at the template level is not enough -- the container must
+          // mount it. Without a mount, /data lives on the container's
+          // ephemeral filesystem and the SQLite database is recreated (and
+          // re-seeded) on EVERY new revision, silently losing all leads.
+          volumeMounts: [
+            {
+              volumeName: 'data'
+              mountPath: '/data'
+            }
+          ]
         }
       ]
 
