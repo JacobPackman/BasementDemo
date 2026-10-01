@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Wet Basement Services | Seattle Water & Mold Specialists</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#f0f9ff',
+                            100: '#e0f2fe',
+                            500: '#0284c7',
+                            600: '#0369a1',
+                            700: '#075985',
+                            800: '#0c4a6e',
+                            900: '#082f49',
+                            dark: '#0b192c',
+                            accent: '#f59e0b',
+                            alert: '#ef4444'
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- HTMX for smooth, no-refresh quote form submission -->
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <!-- FontAwesome icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+    <style>
+        .water-wave {
+            background: linear-gradient(180deg, rgba(2,132,199,0.08) 0%, rgba(2,132,199,0) 100%);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 font-sans antialiased flex flex-col min-h-screen">
+
+    <!-- Top Emergency Bar -->
+    <div class="bg-brand-dark text-white text-xs sm:text-sm py-2 px-4 shadow-sm border-b border-brand-800/40">
+        <div class="max-w-7xl mx-auto flex flex-wrap justify-between items-center gap-2">
+            <div class="flex items-center gap-3">
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-brand-alert/20 text-red-300 border border-red-500/30 animate-pulse">
+                    <i class="fa-solid fa-circle-exclamation mr-1.5"></i> EMERGENCY DISPATCH
+                </span>
+                <span class="text-slate-300">24/7 Seattle Flood Response:</span>
+                <a href="tel:{{ settings.emergency_phone }}" class="font-bold text-amber-400 hover:text-amber-300 tracking-wide">
+                    {{ settings.emergency_phone }}
+                </a>
+            </div>
+            <div class="flex items-center gap-4 text-slate-300 text-xs">
+                <span><i class="fa-solid fa-medal text-amber-400 mr-1"></i> {{ settings.rating_badge }}</span>
+                <span class="hidden md:inline">|</span>
+                <a href="/admin" class="hover:text-white transition flex items-center gap-1 opacity-70 hover:opacity-100">
+                    <i class="fa-solid fa-lock text-[10px]"></i> Dad's CMS Login
+                </a>
+            </div>
+        </div>
+    </div>
+
+    <!-- Navigation Header -->
+    <header class="sticky top-0 z-40 bg-white/95 backdrop-blur shadow-sm border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-20 flex items-center justify-between">
+            <div class="flex items-center space-x-3">
+                <div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-brand-700 to-cyan-500 flex items-center justify-center text-white text-2xl shadow-md shadow-brand-500/20">
+                    <i class="fa-solid fa-shield-halved"></i>
+                </div>
+                <div>
+                    <span class="text-2xl font-black tracking-tight text-brand-dark block leading-none">
+                        WET BASEMENT <span class="text-brand-500">SERVICES</span>
+                    </span>
+                    <span class="text-xs uppercase tracking-widest text-slate-400 font-semibold">
+                        Science-Based Hydrology & Mold Defense
+                    </span>
+                </div>
+            </div>
+
+            <!-- Quick Call Action -->
+            <div class="hidden lg:flex items-center gap-6">
+                <div class="text-right">
+                    <span class="text-xs text-slate-400 block font-medium">Speak Directly with Jerzy:</span>
+                    <a href="tel:{{ settings.phone }}" class="text-lg font-black text-brand-700 hover:text-brand-500">
+                        <i class="fa-solid fa-phone-volume text-sm mr-1 text-brand-500"></i> {{ settings.phone }}
+                    </a>
+                </div>
+                <a href="#quote-form" class="bg-brand-600 hover:bg-brand-500 text-white font-bold px-5 py-2.5 rounded-xl shadow-lg shadow-brand-600/30 transition transform hover:-translate-y-0.5 active:translate-y-0 flex items-center gap-2">
+                    <span>Free Inspection</span>
+                    <i class="fa-solid fa-arrow-right text-xs"></i>
+                </a>
+            </div>
+        </div>
+    </header>
+
+    <!-- Hero Section -->
+    <section class="relative overflow-hidden bg-brand-dark text-white py-16 lg:py-24">
+        <div class="absolute inset-0 opacity-10 bg-[radial-gradient(#38bdf8_1px,transparent_1px)] [background-size:16px_16px]"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-12 items-center">
+                <div class="lg:col-span-7 space-y-6">
+                    <div class="inline-flex items-center gap-2 bg-brand-800/80 border border-brand-600/50 px-3.5 py-1.5 rounded-full text-xs font-semibold text-cyan-300">
+                        <i class="fa-solid fa-certificate text-amber-400"></i>
+                        <span>Lifetime Transferable Warranty on Interior Systems</span>
+                    </div>
+
+                    <h1 class="text-4xl sm:text-5xl lg:text-6xl font-black tracking-tight leading-tight">
+                        {{ settings.hero_headline }}
+                    </h1>
+
+                    <p class="text-lg sm:text-xl text-slate-300 font-normal leading-relaxed max-w-2xl">
+                        {{ settings.hero_subtext }}
+                    </p>
+
+                    <!-- Trust Pillars -->
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-4 pt-4 border-t border-slate-700/60 text-sm">
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-circle-check text-cyan-400 text-lg"></i>
+                            <span class="text-slate-200 font-medium">100% Extreme Abatement Record</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-microscope text-cyan-400 text-lg"></i>
+                            <span class="text-slate-200 font-medium">IICRC Environmental Pros</span>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <i class="fa-solid fa-house-chimney-crack text-cyan-400 text-lg"></i>
+                            <span class="text-slate-200 font-medium">Sub-Slab Desaturation</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Fast Interactive Assessment / Quote Card -->
+                <div class="lg:col-span-5" id="quote-form">
+                    <div class="bg-white rounded-2xl p-6 sm:p-8 text-slate-800 shadow-2xl border border-slate-100 relative">
+                        <div class="mb-4">
+                            <span class="text-xs font-bold text-brand-600 tracking-wider uppercase">Direct Dispatch</span>
+                            <h3 class="text-2xl font-black text-slate-900 leading-tight">Schedule Free Inspection</h3>
+                            <p class="text-xs text-slate-500 mt-1">No sales pressure. Just honest hydrology analysis from our family team.</p>
+                        </div>
+
+                        <!-- HTMX Form: Updates dynamically without reloading the whole page -->
+                        <form hx-post="/quote" hx-target="#quote-form" hx-swap="innerHTML" class="space-y-3.5">
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Your Name *</label>
+                                <input type="text" name="name" required placeholder="John or Jane Doe"
+                                    class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                            </div>
+
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-700 mb-1">Phone Number *</label>
+                                    <input type="tel" name="phone" required placeholder="(206) 555-0123"
+                                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-xs font-bold text-slate-700 mb-1">Email *</label>
+                                    <input type="email" name="email" required placeholder="name@domain.com"
+                                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                                </div>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Service Needed</label>
+                                <select name="service_needed" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none bg-white">
+                                    <option value="Interior French Drain">Interior French Drain & Drainage</option>
+                                    <option value="Sump Pump / Battery Backup">Sump Pump & Battery Backup</option>
+                                    <option value="Mold Remediation">Mold Control & Remediation</option>
+                                    <option value="Crawl Space Vapor Barrier">Crawl Space Vapor Barrier</option>
+                                    <option value="Emergency Flooding">Active Leaking / Emergency</option>
+                                </select>
+                            </div>
+
+                            <div>
+                                <label class="block text-xs font-bold text-slate-700 mb-1">Seattle Area City or Neighborhood</label>
+                                <input type="text" name="address" placeholder="e.g. Wallingford, Redmond, Ballard..."
+                                    class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 text-sm focus:ring-2 focus:ring-brand-500 focus:outline-none">
+                            </div>
+
+                            <div class="flex items-center gap-2 pt-1">
+                                <input type="checkbox" id="emergency_check" name="is_emergency" value="true" class="rounded text-red-600 focus:ring-red-500 w-4 h-4">
+                                <label for="emergency_check" class="text-xs font-bold text-red-600 flex items-center gap-1 cursor-pointer">
+                                    <i class="fa-solid fa-triangle-exclamation"></i> Active Flood Emergency (Requires Priority Call)
+                                </label>
+                            </div>
+
+                            <button type="submit" class="w-full bg-brand-600 hover:bg-brand-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg shadow-brand-600/30 transition transform hover:-translate-y-0.5 active:translate-y-0 flex items-center justify-center gap-2 mt-4 text-sm">
+                                <span>Get My Free Inspection & Estimate</span>
+                                <i class="fa-solid fa-arrow-right text-xs"></i>
+                            </button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Services Section -->
+    <section class="py-20 bg-slate-100/70 border-b border-slate-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center max-w-3xl mx-auto mb-16">
+                <span class="text-xs font-black uppercase tracking-widest text-brand-600">Engineered Solutions</span>
+                <h2 class="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Permanent Science-Based Systems</h2>
+                <p class="text-slate-600 mt-3 text-base">We don't sell cosmetic patches. We desaturate sub-slab soils and permanently control water flow under extreme hydrostatic conditions.</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                {% for service in services %}
+                <div class="bg-white rounded-2xl p-6 shadow-sm border border-slate-200/80 hover:shadow-xl hover:border-brand-500/40 transition-all duration-300 flex flex-col justify-between group">
+                    <div>
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-3xl">{{ service.icon }}</span>
+                            <span class="text-[11px] font-bold px-2.5 py-1 rounded-full bg-brand-50 text-brand-700 border border-brand-200">
+                                {{ service.badge }}
+                            </span>
+                        </div>
+                        <h3 class="text-lg font-black text-slate-900 group-hover:text-brand-600 transition">
+                            {{ service.title }}
+                        </h3>
+                        <p class="text-xs font-semibold text-brand-500 mt-1">
+                            {{ service.tagline }}
+                        </p>
+                        <p class="text-slate-600 text-xs mt-3 leading-relaxed">
+                            {{ service.description }}
+                        </p>
+                    </div>
+                    <div class="pt-6 mt-4 border-t border-slate-100 flex items-center justify-between text-xs font-bold text-brand-600">
+                        <span>Learn More</span>
+                        <i class="fa-solid fa-arrow-right transform group-hover:translate-x-1 transition text-slate-400"></i>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <!-- Real Testimonials -->
+    <section class="py-20 bg-white">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex flex-col md:flex-row md:items-end justify-between mb-12">
+                <div>
+                    <span class="text-xs font-black uppercase tracking-widest text-brand-600">Puget Sound Reputation</span>
+                    <h2 class="text-3xl sm:text-4xl font-black text-slate-900 mt-2">Verified Client Experiences</h2>
+                </div>
+                <div class="mt-4 md:mt-0 text-sm text-slate-500 font-medium flex items-center gap-2">
+                    <span class="text-amber-400 flex"><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i><i class="fa-solid fa-star"></i></span>
+                    <span>5.0 Star Average from 1,000+ local families</span>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {% for t in testimonials %}
+                <div class="bg-slate-50 rounded-2xl p-6 border border-slate-200 shadow-sm flex flex-col justify-between">
+                    <div>
+                        <div class="flex text-amber-400 text-xs gap-1 mb-3">
+                            {% for i in range(t.rating) %}
+                            <i class="fa-solid fa-star"></i>
+                            {% endfor %}
+                        </div>
+                        <p class="text-slate-700 text-sm italic leading-relaxed">
+                            "{{ t.quote }}"
+                        </p>
+                    </div>
+                    <div class="pt-4 mt-6 border-t border-slate-200/80 flex items-center justify-between">
+                        <div>
+                            <span class="font-bold text-slate-900 text-sm block">{{ t.author }}</span>
+                            <span class="text-xs text-slate-500">{{ t.location }}</span>
+                        </div>
+                        <span class="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200 flex items-center gap-1">
+                            <i class="fa-solid fa-check"></i> Verified
+                        </span>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="mt-auto bg-brand-dark text-slate-400 py-12 text-xs border-t border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 grid grid-cols-1 md:grid-cols-3 gap-8">
+            <div>
+                <span class="text-white font-black text-lg block mb-2">Wet Basement Services</span>
+                <p class="leading-relaxed">Family-owned, science-based interior waterproofing & mold control specialists serving Seattle and Western Washington for 40+ years.</p>
+                <p class="mt-4 text-slate-500">Service Area: {{ settings.service_area }}</p>
+            </div>
+            <div>
+                <span class="text-white font-bold text-sm block mb-2">Direct Contacts</span>
+                <ul class="space-y-2">
+                    <li><strong class="text-slate-300">Office:</strong> {{ settings.phone }}</li>
+                    <li><strong class="text-slate-300">Emergency:</strong> {{ settings.emergency_phone }}</li>
+                    <li><strong class="text-slate-300">Email:</strong> {{ settings.email }}</li>
+                </ul>
+            </div>
+            <div>
+                <span class="text-white font-bold text-sm block mb-2">Internal Administration</span>
+                <p class="mb-3">Dad can manage phone numbers, site text, reviews, and view incoming customer inquiries directly in the portal.</p>
+                <a href="/admin" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-brand-700 hover:bg-brand-600 text-white rounded-lg font-bold transition">
+                    <i class="fa-solid fa-shield-halved"></i>
+                    <span>Access Dad's CMS Dashboard</span>
+                </a>
+            </div>
+        </div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 mt-8 pt-6 border-t border-slate-800/80 text-center text-slate-500">
+            &copy; 2026 Wet Basement Services. All rights reserved.
+        </div>
+    </footer>
+
+</body>
+</html>

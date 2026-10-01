@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local SQLite databases — never commit these, the container makes its own
+*.db
+*.db-wal
+*.db-shm
+
+# Azure / local secrets
+.env
+*.pem
+
+# Bicep build output
+infra/*.json

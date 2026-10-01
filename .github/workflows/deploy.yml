@@ -1,0 +1,159 @@
+name: Build and Deploy to Azure Container Apps
+
+# Build once with an immutable tag, stage at 0% traffic, smoke test the
+# revision-specific FQDN, then flip traffic. Rollback = traffic shift.
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'infra/**'
+  workflow_dispatch:
+
+# OIDC: id-token:write lets azure/login mint a short-lived federated token.
+# No AZURE_CREDENTIALS secret is ever stored.
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-wetbasement-prod
+  AZURE_CONTAINER_APP: wbs-web
+  ACR_NAME: acrwetbasement
+  IMAGE_NAME: wbs-web
+
+jobs:
+  # ------------------------------------------------------------------
+  # 1. BUILD + PUSH to ACR
+  # ------------------------------------------------------------------
+  build:
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.vars.outputs.image_tag }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set image tag to commit SHA
+        id: vars
+        run: echo "image_tag=${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # az acr login uses the AAD token from the step above -- no admin
+      # credentials on the registry, so nothing to leak or rotate.
+      - name: Log in to ACR (AAD, no admin creds)
+        run: az acr login --name ${{ env.ACR_NAME }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push (SHA tag + latest)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
+            ${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ------------------------------------------------------------------
+  # 2. STAGE -- new revision lands at 0% traffic
+  # ------------------------------------------------------------------
+  stage:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: dev
+    outputs:
+      revision_fqdn: ${{ steps.deploy.outputs.revision_fqdn }}
+      revision_name: ${{ steps.deploy.outputs.revision_name }}
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      # Traffic is pinned to a named revision, so this new revision comes up
+      # at 0% and takes no customer traffic until promote runs.
+      - name: Deploy new revision
+        id: deploy
+        run: |
+          set -euo pipefail
+          SUFFIX="rev-${{ needs.build.outputs.image_tag }}"
+
+          az containerapp update \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --image "${{ env.ACR_NAME }}.azurecr.io/${{ env.IMAGE_NAME }}:${{ needs.build.outputs.image_tag }}" \
+            --revision-suffix "$SUFFIX" \
+            --output none
+
+          APP_FQDN=$(az containerapp show \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+
+          echo "revision_name=${{ env.AZURE_CONTAINER_APP }}--${SUFFIX}" >> "$GITHUB_OUTPUT"
+          echo "revision_fqdn=${{ env.AZURE_CONTAINER_APP }}--${SUFFIX}.${APP_FQDN#*.}" >> "$GITHUB_OUTPUT"
+
+  # ------------------------------------------------------------------
+  # 3. SMOKE TEST the new revision directly, before customers see it
+  # ------------------------------------------------------------------
+  smoke:
+    needs: [build, stage]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify the staged revision is healthy
+        run: |
+          set -euo pipefail
+          URL="https://${{ needs.stage.outputs.revision_fqdn }}/health"
+          echo "Probing $URL"
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 "$URL" | grep -q '"status":"healthy"'; then
+              echo "PASS: staged revision is healthy"
+              exit 0
+            fi
+            echo "attempt $i/20 not ready (cold start), retrying in 6s..."
+            sleep 6
+          done
+          echo "FAIL: staged revision never reported healthy"
+          exit 1
+
+  # ------------------------------------------------------------------
+  # 4. PROMOTE -- requires manual approval via the prod environment
+  # ------------------------------------------------------------------
+  promote:
+    needs: [stage, smoke]
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Shift 100% of traffic to the new revision
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight "${{ needs.stage.outputs.revision_name }}=100"
+
+      - name: Summary
+        run: |
+          echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`${{ needs.build.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Revision: \`${{ needs.stage.outputs.revision_name }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Rollback: run the Rollback workflow against the previous revision." >> "$GITHUB_STEP_SUMMARY"

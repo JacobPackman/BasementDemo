@@ -1,0 +1,49 @@
+name: Rollback Container App
+
+# One-command rollback: shift traffic back to a previously deployed revision.
+# No rebuild, no re-push -- the old image is still in ACR. Takes seconds.
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision_name:
+        description: 'Revision to send 100% of traffic to (e.g. wbs-web--rev-abc123def456)'
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: rg-wetbasement-prod
+  AZURE_CONTAINER_APP: wbs-web
+
+jobs:
+  rollback:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: List available revisions (for the log)
+        run: |
+          az containerapp revision list \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query "[].{name:name, active:properties.active, created:properties.createdTime, image:properties.template.containers[0].image}" \
+            -o table
+
+      - name: Shift traffic back
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight "${{ inputs.revision_name }}=100"
+          echo "Traffic shifted to ${{ inputs.revision_name }}" >> "$GITHUB_STEP_SUMMARY"

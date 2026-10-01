@@ -1,0 +1,17 @@
+services:
+  web:
+    build: .
+    container_name: wetbasement_prototype
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=sqlite+aiosqlite:////data/wetbasement.db
+      - ADMIN_USER=admin
+      - ADMIN_PASS=seattlewet123
+      - SECRET_KEY=wet-basement-super-secret-key-change-in-prod
+    volumes:
+      - wbs_data:/data
+
+volumes:
+  wbs_data:

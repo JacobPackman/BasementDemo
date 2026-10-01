@@ -1,0 +1,19 @@
+<div class="bg-emerald-50 border border-emerald-200 rounded-xl p-6 text-center space-y-3">
+    <div class="w-12 h-12 bg-emerald-100 text-emerald-600 rounded-full flex items-center justify-center mx-auto text-xl">
+        <i class="fa-solid fa-check"></i>
+    </div>
+    <h3 class="text-xl font-black text-slate-900">Thank You, {{ lead.name }}!</h3>
+    <p class="text-xs text-slate-600 max-w-sm mx-auto">
+        Your request for <strong>{{ lead.service_needed }}</strong> has been logged directly into our system. 
+        {% if lead.is_emergency %}
+        <span class="block mt-2 p-2 bg-red-100 text-red-800 font-bold rounded">
+            🚨 Marked as EMERGENCY: Jerzy or John will prioritize calling {{ lead.phone }} shortly.
+        </span>
+        {% else %}
+        We will call you at <strong>{{ lead.phone }}</strong> within 1 business day to confirm your free inspection time.
+        {% endif %}
+    </p>
+    <div class="pt-2">
+        <a href="/" class="text-xs font-bold text-brand-600 hover:text-brand-500">Submit another inquiry</a>
+    </div>
+</div>
