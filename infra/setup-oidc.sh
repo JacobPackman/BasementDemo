@@ -145,10 +145,31 @@ add_fed() {
 
 # Scoped to a GitHub Environment, so a compromised default-branch workflow
 # cannot authenticate for a prod deploy.
-add_fed "github-dev"    "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:dev"
-add_fed "github-prod"   "repo:${GITHUB_ORG}/${GITHUB_REPO}:environment:prod"
-# The build job runs before any environment is selected.
-add_fed "github-branch" "repo:${GITHUB_ORG}/${GITHUB_REPO}:ref:refs/heads/main"
+#
+# NOTE: GitHub now emits IMMUTABLE subjects containing the numeric owner and
+# repo IDs, e.g.
+#   repo:OWNER@<owner_id>/REPO@<repo_id>:ref:refs/heads/main
+# while older tokens used the name-only form. If only the name-only subject is
+# registered, azure/login fails with:
+#   AADSTS700213: No matching federated identity record found for presented
+#   assertion subject 'repo:OWNER@ID/REPO@ID:ref:refs/heads/main'
+# So register BOTH forms for every subject. Harmless, and immune to the rollout.
+OWNER_ID="$(gh api "repos/${GITHUB_ORG}/${GITHUB_REPO}" --jq '.owner.id' 2>/dev/null || echo '')"
+REPO_ID="$(gh api "repos/${GITHUB_ORG}/${GITHUB_REPO}" --jq '.id' 2>/dev/null || echo '')"
+
+for spec in "dev:environment:dev" "prod:environment:prod" "branch:ref:refs/heads/main"; do
+  label="${spec%%:*}"
+  suffix="${spec#*:}"
+  add_fed "github-${label}" "repo:${GITHUB_ORG}/${GITHUB_REPO}:${suffix}"
+  if [[ -n "${OWNER_ID}" && -n "${REPO_ID}" ]]; then
+    add_fed "gh-imm-${label}" \
+      "repo:${GITHUB_ORG}@${OWNER_ID}/${GITHUB_REPO}@${REPO_ID}:${suffix}"
+  fi
+done
+if [[ -z "${OWNER_ID}" || -z "${REPO_ID}" ]]; then
+  echo "    WARNING: could not resolve repo IDs (gh not authed?). If azure/login"
+  echo "    fails with AADSTS700213, re-run this script once gh is authenticated."
+fi
 
 # ---------------------------------------------------------------------------
 # RBAC -- scoped to the resource group

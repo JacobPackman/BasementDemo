@@ -89,6 +89,26 @@ jobs:
           tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
+      # ACA's default (`traffic: [{latestRevision: true}]`) sends 100% of
+      # traffic to the NEWEST revision the moment it is created -- the opposite
+      # of staging. So capture who is live now, deploy, then explicitly pin
+      # traffic back to the old revision so the new one truly sits at 0%.
+      - name: Capture the currently-live revision
+        id: prev
+        run: |
+          set -euo pipefail
+          PREV=$(az containerapp revision list \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query '[?properties.trafficWeight==`100`].name | [0]' -o tsv)
+          if [ -z "$PREV" ] || [ "$PREV" = "null" ]; then
+            echo "No revision is currently serving traffic (first deploy)."
+            PREV=""
+          else
+            echo "Currently live: ${PREV}"
+          fi
+          echo "revision=${PREV}" >> "$GITHUB_OUTPUT"
+
       # Traffic is pinned to a named revision, so this new revision comes up
       # at 0% and takes no customer traffic until promote runs.
       - name: Deploy new revision
@@ -111,6 +131,25 @@ jobs:
 
           echo "revision_name=${{ env.AZURE_CONTAINER_APP }}--${SUFFIX}" >> "$GITHUB_OUTPUT"
           echo "revision_fqdn=${{ env.AZURE_CONTAINER_APP }}--${SUFFIX}.${APP_FQDN#*.}" >> "$GITHUB_OUTPUT"
+
+      - name: Pin traffic back to the previous revision (new one goes to 0%)
+        if: steps.prev.outputs.revision != ''
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight "${{ steps.prev.outputs.revision }}=100"
+          echo "Traffic pinned to ${{ steps.prev.outputs.revision }}; new revision at 0%."
+
+      - name: Confirm the staged revision carries no traffic
+        run: |
+          set -euo pipefail
+          az containerapp revision list \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query "[].{name:name, traffic:properties.trafficWeight, health:properties.healthState}" \
+            -o table
 
   # ------------------------------------------------------------------
   # 3. SMOKE TEST the new revision directly, before customers see it

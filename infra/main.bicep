@@ -187,8 +187,12 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
         // IpRestrictionsAddressEnteredInvalid. To lock this down to Cloudflare
         // later, list their published IPv4/IPv6 ranges explicitly.
         ipSecurityRestrictions: []
-        // Pinned to a named revision so a new revision never auto-takes
-        // customer traffic before the smoke test passes.
+        // Initial state: one revision, so "latest gets everything" is correct
+        // here. IMPORTANT: latestRevision:true means traffic FOLLOWS the newest
+        // revision -- every new revision would immediately go live. Staging is
+        // therefore enforced by the pipeline, which pins traffic back to the
+        // previous revision after creating a new one. Do not assume this block
+        // stages anything by itself.
         traffic: [
           {
             latestRevision: true
