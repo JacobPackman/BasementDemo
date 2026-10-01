@@ -169,40 +169,50 @@ need a rollback." Those are different questions.
 
 ## Known constraints
 
-**SQLite over Azure Files (SMB) is single-writer and file locking over SMB is
-unreliable.** The Bicep now defaults `maxReplicas: 1` precisely because of this
-— at under 100 visits/month you will never need more than one replica, so the
-risk is removed for free. **Do not raise `maxReplicas` above 1 until the
-database is migrated to Postgres**, or concurrent writers can corrupt the file.
+**NEVER run SQLite on an Azure Files (SMB) volume.** This was tried and it took
+the site down. It worked initially — served traffic, survived restarts — then
+entered a permanent crash loop:
 
-**Persistence requires `volumeMounts`, not just `volumes`.** The Bicep declares
-`template.volumes` *and* a matching `volumeMounts` on the container. Without the
-mount, `/data` is ephemeral container storage and the SQLite database is
-recreated — losing every lead — on each new revision. Verify with:
-
-```bash
-az containerapp revision show -n wbs-web -g rg-wetbasement-demo \
-  --revision <rev> --query "properties.template.containers[0].volumeMounts"
+```
+sqlalchemy.exc.OperationalError: (sqlite3.OperationalError) database is locked
+[SQL: CREATE TABLE site_settings (...)]
+ERROR:    Application startup failed. Exiting.   (exit code 3)
 ```
 
-**A Bicep redeploy resets traffic to the newest revision.** The template
-declares `traffic: [{latestRevision: true}]`, so `az deployment group create`
-re-points 100% of traffic at the latest revision — undoing the pipeline's
-0%-traffic staging. After any infra deploy, re-check traffic and re-pin:
+SQLite needs POSIX `fcntl()` byte-range locks, which SMB does not honour
+faithfully. A container killed mid-transaction (e.g. during a revision swap)
+leaves a lock no later start can clear. The readiness probe fails, ACA retries
+forever, and the app is **down** — not degraded.
+
+- Not tunable: `busy_timeout` does not help, WAL is worse (needs mmap).
+- ACA only offers Azure Files for volumes, so **there is no reliable persistent
+  volume for SQLite on ACA.**
+- **Current design: SQLite on container-local disk** (`/app/wetbasement.db`).
+  It works, but it is **ephemeral — the database resets on every new revision.**
+  Acceptable for a demo. For real persistence, use **PostgreSQL Flexible Server
+  (Burstable B1ms, ~$13/mo)**.
+- `maxReplicas` stays at 1 regardless: a single-writer database should never
+  have two containers writing to it.
+
+**Diagnosing this class of failure:**
+
+```bash
+az containerapp logs show -n wbs-web -g rg-wetbasement-demo --type system --tail 40
+az containerapp logs show -n wbs-web -g rg-wetbasement-demo --type console --tail 60
+```
+
+Tells: `Probe of Readiness failed` + `terminated with exit code '3'` +
+`ProcessExited` repeating in system logs, with the traceback in console logs.
+
+**A Bicep redeploy resets traffic to the newest revision.** The template sets
+`traffic: [{latestRevision: true}]`, so an infra deploy bypasses the pipeline's
+staging and puts the newest revision live. Re-check traffic after any infra
+deploy:
 
 ```bash
 az containerapp ingress traffic set -n wbs-web -g rg-wetbasement-demo \
   --revision-weight <revision-to-serve>=100
 ```
-
-**Azure Files reports open files as 0 bytes.** Don't diagnose persistence from
-file size or `az storage file download` — test behaviourally by writing a
-record, replacing the container, and checking the record survived.
-
-Migrate to **Azure Database for PostgreSQL Flexible Server, Burstable B1ms**
-(~$13/mo) before adding anything stateful (booking, accounts, uploads). Note
-this quadruples the bill at current traffic — so migrate when a feature actually
-needs it, not preemptively.
 
 **Cold starts.** Scale-to-zero means the first request after idle pays a
 platform cold-start (~2–5s). FastAPI itself boots in well under a second; the
