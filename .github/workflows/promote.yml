@@ -57,19 +57,58 @@ jobs:
           fi
           echo "revision=${REV}" >> "$GITHUB_OUTPUT"
 
-      - name: Verify the target is healthy before promoting
+      - name: Verify the target is actually serving before promoting
         run: |
           set -euo pipefail
-          STATE=$(az containerapp revision show \
-            --name "${{ env.AZURE_CONTAINER_APP }}" \
-            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-            --revision "${{ steps.target.outputs.revision }}" \
-            --query properties.healthState -o tsv)
-          echo "healthState=${STATE}"
-          if [ "${STATE}" != "Healthy" ]; then
-            echo "Refusing to promote an unhealthy revision."
+          REV="${{ steps.target.outputs.revision }}"
+
+          show() {
+            az containerapp revision show \
+              --name "${{ env.AZURE_CONTAINER_APP }}" \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --revision "$REV" --query "$1" -o tsv
+          }
+
+          # healthState can legitimately read "None" (e.g. a revision created by
+          # an infra deploy or a manual update), even when the revision has
+          # probes and serves traffic fine. Gating on it would refuse to promote
+          # healthy revisions. Gate on runningState/provisioningState instead,
+          # then prove it end-to-end with a live probe -- which is the only
+          # signal that reflects reality anyway.
+          RUNNING=$(show properties.runningState)
+          PROV=$(show properties.provisioningState)
+          HEALTH=$(show properties.healthState)
+          echo "runningState=${RUNNING} provisioningState=${PROV} healthState=${HEALTH}"
+
+          if [ "${RUNNING}" != "Running" ]; then
+            echo "::error::Revision ${REV} is not Running (got '${RUNNING}'). Refusing to promote."
             exit 1
           fi
+          if [ "${PROV}" != "Provisioned" ]; then
+            echo "::error::Revision ${REV} is not Provisioned (got '${PROV}'). Refusing to promote."
+            exit 1
+          fi
+          if [ "${HEALTH}" != "Healthy" ]; then
+            echo "::warning::healthState is '${HEALTH}', not 'Healthy'. Continuing -- the live probe below is authoritative."
+          fi
+
+          APP_FQDN=$(az containerapp show \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query properties.configuration.ingress.fqdn -o tsv)
+          REV_FQDN="${REV}.${APP_FQDN#*.}"
+          echo "Probing https://${REV_FQDN}/health"
+
+          for i in $(seq 1 20); do
+            if curl -fsS --max-time 10 "https://${REV_FQDN}/health" | grep -q '"status":"healthy"'; then
+              echo "PASS: ${REV} is serving healthy responses"
+              exit 0
+            fi
+            echo "attempt $i/20 not ready, retrying in 6s..."
+            sleep 6
+          done
+          echo "::error::Revision ${REV} never returned a healthy response"
+          exit 1
 
       - name: Shift 100% of traffic
         run: |
