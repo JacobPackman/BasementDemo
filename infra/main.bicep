@@ -39,8 +39,8 @@ param adminPass string
 @secure()
 param secretKey string
 
-@description('Set true to allow Azure services (incl. Cloudflare origin) through the ACA firewall.')
-param allowAzureIps bool = true
+@description('Set FALSE on the first pass. The registry and environment must exist before the Container App, which needs an image that only exists after the first build. The bootstrap script deploys false, builds the image, then deploys true.')
+param deployApp bool = true
 
 var acrName = toLower('${prefix}acr${uniqueString(resourceGroup().id)}')
 var envName = '${prefix}-env'
@@ -63,6 +63,12 @@ resource law 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
 // ---------------------------------------------------------------------------
 // Registry -- Basic tier is ~$5/mo and includes 10 GiB.
 // Admin user disabled deliberately: auth is AAD (push) + managed identity (pull).
+//
+// NOTE: do NOT set properties.policies.retentionPolicy on Basic. Azure rejects
+// it with the misleading error "The SKU Basic is not supported" (SkuNotSupported)
+// even on the GA API version -- it reads as a SKU problem but is really the
+// retention policy. Untagged-manifest retention needs Standard or higher.
+// Watch storage instead, or upgrade to Standard if images accumulate.
 // ---------------------------------------------------------------------------
 resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   name: acrName
@@ -70,9 +76,6 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-11-01-preview' = {
   sku: { name: 'Basic' }
   properties: {
     adminUserEnabled: false
-    policies: {
-      retentionPolicy: { status: 'enabled', days: 30 }
-    }
   }
 }
 
@@ -159,7 +162,7 @@ resource envStorage 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
 // ---------------------------------------------------------------------------
 // Container App
 // ---------------------------------------------------------------------------
-resource app 'Microsoft.App/containerApps@2024-03-01' = {
+resource app 'Microsoft.App/containerApps@2024-03-01' = if (deployApp) {
   name: appName
   location: location
   identity: {
@@ -179,14 +182,11 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
         external: true
         targetPort: 8000
         allowInsecure: false
-        ipSecurityRestrictions: allowAzureIps ? [
-          {
-            name: 'allow-azure-services'
-            action: 'Allow'
-            ipAddressRange: 'AzureCloud'
-            description: 'Allow Azure-hosted reverse proxies such as Cloudflare origin pulls'
-          }
-        ] : []
+        // NOTE: ipSecurityRestrictions.ipAddressRange requires a real CIDR.
+        // Service tags such as "AzureCloud" are rejected at preflight with
+        // IpRestrictionsAddressEnteredInvalid. To lock this down to Cloudflare
+        // later, list their published IPv4/IPv6 ranges explicitly.
+        ipSecurityRestrictions: []
         // Pinned to a named revision so a new revision never auto-takes
         // customer traffic before the smoke test passes.
         traffic: [
@@ -275,7 +275,9 @@ resource app 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output acrLoginServer string = acr.properties.loginServer
-output containerAppFqdn string = app.properties.configuration.ingress.fqdn
-output containerAppName string = app.name
+// `app!` non-null assertion: the resource only exists when deployApp is true,
+// which is exactly the branch this ternary takes.
+output containerAppFqdn string = deployApp ? app!.properties.configuration.ingress.fqdn : ''
+output containerAppName string = deployApp ? app!.name : appName
 output managedIdentityClientId string = identity.properties.clientId
 output logAnalyticsId string = law.id

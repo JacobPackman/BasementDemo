@@ -17,11 +17,14 @@ permissions:
   id-token: write
   contents: read
 
+# Names come from GitHub repository *variables*, populated from the Bicep
+# outputs by infra/setup-oidc.sh. ACR in particular MUST be dynamic -- its name
+# embeds a uniqueString hash and cannot be hardcoded here.
 env:
-  AZURE_RESOURCE_GROUP: rg-wetbasement-prod
-  AZURE_CONTAINER_APP: wbs-web
-  ACR_NAME: acrwetbasement
-  IMAGE_NAME: wbs-web
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+  ACR_NAME: ${{ vars.ACR_NAME }}
+  IMAGE_NAME: ${{ vars.IMAGE_NAME }}
 
 jobs:
   # ------------------------------------------------------------------
@@ -41,9 +44,11 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # The bootstrap writes these as repository VARIABLES, not secrets.
+          # Fall back gracefully so either placement works.
+          client-id: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
       # az acr login uses the AAD token from the step above -- no admin
       # credentials on the registry, so nothing to leak or rotate.
@@ -78,9 +83,11 @@ jobs:
       - name: Azure login (OIDC)
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          # The bootstrap writes these as repository VARIABLES, not secrets.
+          # Fall back gracefully so either placement works.
+          client-id: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
 
       # Traffic is pinned to a named revision, so this new revision comes up
       # at 0% and takes no customer traffic until promote runs.
@@ -129,31 +136,29 @@ jobs:
           exit 1
 
   # ------------------------------------------------------------------
-  # 4. PROMOTE -- requires manual approval via the prod environment
+  # There is deliberately NO auto-promote job here.
+  #
+  # Promotion is a separate, manually-triggered workflow (promote.yml).
+  # Pushing to main builds, stages at 0% traffic, and smoke tests -- then
+  # STOPS. A human decides when customers see the new revision.
+  #
+  # Why not GitHub's "required reviewers" environment gate? It is a paid-plan
+  # feature: on a private repo, GitHub Free rejects it with
+  #   HTTP 422 "Please ensure the billing plan supports the required
+  #   reviewers protection rule."
+  # A workflow_dispatch workflow gives the same human gate on a free plan,
+  # and works identically on a paid one.
   # ------------------------------------------------------------------
-  promote:
-    needs: [stage, smoke]
+  staged:
+    needs: [build, stage, smoke]
     runs-on: ubuntu-latest
-    environment: prod
     steps:
-      - name: Azure login (OIDC)
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Shift 100% of traffic to the new revision
-        run: |
-          set -euo pipefail
-          az containerapp ingress traffic set \
-            --name "${{ env.AZURE_CONTAINER_APP }}" \
-            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
-            --revision-weight "${{ needs.stage.outputs.revision_name }}=100"
-
       - name: Summary
         run: |
-          echo "### Deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "### Staged, not promoted :hourglass:" >> "$GITHUB_STEP_SUMMARY"
           echo "- Image: \`${{ needs.build.outputs.image_tag }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- Revision: \`${{ needs.stage.outputs.revision_name }}\`" >> "$GITHUB_STEP_SUMMARY"
-          echo "- Rollback: run the Rollback workflow against the previous revision." >> "$GITHUB_STEP_SUMMARY"
+          echo "- Smoke test: passed on the revision-specific FQDN" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Serving **0% of traffic**. Customers are unaffected." >> "$GITHUB_STEP_SUMMARY"
+          echo "Run the **Promote** workflow to shift traffic." >> "$GITHUB_STEP_SUMMARY"

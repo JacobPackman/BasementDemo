@@ -1,0 +1,88 @@
+name: Promote Staged Revision
+
+# The human gate. Push to main stages a revision at 0% traffic and smoke tests
+# it, then stops. Run THIS workflow to send real traffic to it.
+#
+# Replaces GitHub's "required reviewers" environment gate, which is a paid-plan
+# feature and is rejected on private repos under GitHub Free (HTTP 422).
+# Behaviour is otherwise identical: nothing reaches customers without a human.
+
+on:
+  workflow_dispatch:
+    inputs:
+      revision_name:
+        description: 'Revision to promote. Leave blank for the newest revision.'
+        required: false
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP }}
+  AZURE_CONTAINER_APP: ${{ vars.AZURE_CONTAINER_APP }}
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    environment: prod
+    steps:
+      - name: Azure login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID || vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Show all revisions
+        run: |
+          az containerapp revision list \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --query "[].{name:name, active:properties.active, traffic:properties.trafficWeight, created:properties.createdTime, healthy:properties.healthState}" \
+            -o table
+
+      - name: Resolve target revision
+        id: target
+        run: |
+          set -euo pipefail
+          REV="${{ inputs.revision_name }}"
+          if [ -z "$REV" ]; then
+            REV=$(az containerapp revision list \
+              --name "${{ env.AZURE_CONTAINER_APP }}" \
+              --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+              --query "sort_by([?properties.active], &properties.createdTime)[-1].name" -o tsv)
+            echo "No revision given; newest active revision is ${REV}"
+          fi
+          echo "revision=${REV}" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the target is healthy before promoting
+        run: |
+          set -euo pipefail
+          STATE=$(az containerapp revision show \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision "${{ steps.target.outputs.revision }}" \
+            --query properties.healthState -o tsv)
+          echo "healthState=${STATE}"
+          if [ "${STATE}" != "Healthy" ]; then
+            echo "Refusing to promote an unhealthy revision."
+            exit 1
+          fi
+
+      - name: Shift 100% of traffic
+        run: |
+          set -euo pipefail
+          az containerapp ingress traffic set \
+            --name "${{ env.AZURE_CONTAINER_APP }}" \
+            --resource-group "${{ env.AZURE_RESOURCE_GROUP }}" \
+            --revision-weight "${{ steps.target.outputs.revision }}=100"
+
+      - name: Summary
+        run: |
+          echo "### Promoted :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Revision: \`${{ steps.target.outputs.revision }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Traffic: 100%" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Rollback: run the **Rollback** workflow against the previous revision." >> "$GITHUB_STEP_SUMMARY"
