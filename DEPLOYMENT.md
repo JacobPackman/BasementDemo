@@ -304,11 +304,45 @@ RBAC, the first image build, and the GitHub variables.
 
 ## Teardown
 
-This is a demo. Everything removes cleanly:
+**This was executed on 2026-10-01.** The Azure side of the demo is gone.
+
+What was removed:
+
+| Thing | Identifier |
+|---|---|
+| Resource group (6 resources) | `rg-wetbasement-demo` |
+| Container registry | `wbsacr657q33iqgeg2a` (ACR Basic) |
+| Container App | `wbs-web` |
+| Container Apps environment | `wbs-env` |
+| Log Analytics workspace | `wbs-logs` |
+| Managed identity | `wbs-id` |
+| Storage account (unused) | `wbsdata657q33iqgeg2a` |
+| Entra app registration | `wbs-github-oidc` / `7f7239a3-cb97-4c83-8707-afa00929a087` |
+| Federated credentials | 6 (name-only + immutable, ×dev/prod/main) |
+| RBAC assignment | Contributor on the resource group |
+
+To reproduce the teardown:
 
 ```bash
 az group delete --name rg-wetbasement-demo --yes --no-wait
-az ad app delete --id <app-id>          # printed by the bootstrap
-gh repo delete JacobPackman/BasementDemo --yes
+az ad app delete --id <app-id-from-bootstrap>
 ```
+
+Notes learned doing it:
+
+- **The Container Apps environment is the straggler.** The resource group took
+  ~20 minutes to delete; every other resource went within the first minute and
+  `wbs-env` held the group open the entire time. `--no-wait` plus polling works.
+- **Deleting the resource group removes the RBAC assignment** scoped to it. Do
+  the group first, then the app registration, and nothing is left dangling.
+- **The app registration is tenant-level** and is *not* removed by deleting the
+  resource group. Forget it and you leave an unused identity in the directory.
+- After deletion the demo hostname stops resolving entirely — a useful way to
+  confirm the teardown actually landed.
+
+The GitHub repo is deliberately kept as a working reference template. Its
+Actions **variables are now stale** (they reference the deleted subscription,
+registry and app registration), so a push to `main` fails at `azure/login`
+until `infra/setup-oidc.sh` is run again.
+
 
